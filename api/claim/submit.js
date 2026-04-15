@@ -43,7 +43,44 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Prize already claimed' });
     }
 
-    // 2. Verify puzzle completion using GPT-4 Vision
+    // 2. Upload photo to Supabase Storage
+    let photoUrl = null;
+    try {
+      // Extract base64 data from data URL
+      const base64Data = photo.split(',')[1];
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      // Generate unique filename
+      const filename = `${nfc_code}-${Date.now()}.jpg`;
+      const filePath = `claims/${filename}`;
+      
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('puzzle-photos')
+        .upload(filePath, buffer, {
+          contentType: 'image/jpeg',
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw uploadError;
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('puzzle-photos')
+        .getPublicUrl(filePath);
+      
+      photoUrl = urlData.publicUrl;
+    } catch (storageError) {
+      console.error('Storage error:', storageError);
+      // Continue without photo if storage fails (can be added manually later)
+      photoUrl = null;
+    }
+
+    // 3. Verify puzzle completion using GPT-4 Vision
     let puzzleVerified = false;
     try {
       const response = await openai.chat.completions.create({
@@ -76,13 +113,13 @@ export default async function handler(req, res) {
       puzzleVerified = true;
     }
 
-    // 3. Create claim record
+    // 4. Create claim record
     const { data: claimData, error: claimError } = await supabase
       .from('prize_claims')
       .insert({
         nfc_code,
         email,
-        photo_url: photo,
+        photo_url: photoUrl,
         verified: puzzleVerified,
       })
       .select()
@@ -93,7 +130,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Failed to create claim' });
     }
 
-    // 4. Mark NFC code as claimed
+    // 5. Mark NFC code as claimed
     const { error: updateError } = await supabase
       .from('nfc_codes')
       .update({ is_claimed: true, claimed_at: new Date().toISOString() })
@@ -103,7 +140,7 @@ export default async function handler(req, res) {
       console.error('NFC update error:', updateError);
     }
 
-    // 5. Send email notification (TODO: implement)
+    // 6. Send email notification (TODO: implement)
     // await sendPrizeEmail(email, nfcData.prize_type, nfcData.prize_value);
 
     return res.status(200).json({
@@ -111,6 +148,7 @@ export default async function handler(req, res) {
       prize: nfcData.prize_value,
       verified: puzzleVerified,
       claim_id: claimData.id,
+      photo_url: photoUrl,
     });
   } catch (error) {
     console.error('Submit claim error:', error);
