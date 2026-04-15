@@ -42,7 +42,7 @@ export default async function handler(req, res) {
   try {
     const { codes, admin_key } = req.body;
 
-    // Simple admin auth (replace with proper auth)
+    // Simple admin auth
     if (admin_key !== process.env.ADMIN_KEY) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
@@ -51,11 +51,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid codes array' });
     }
 
-    const records = codes.map(code => ({
-      code,
-      ...getRandomPrize(),
-      is_claimed: false,
-    }));
+    const records = codes.map(code => {
+      const prize = getRandomPrize();
+      return {
+        code,
+        prize_type: prize.type,
+        prize_value: prize.value,
+        is_claimed: false,
+      };
+    });
 
     const { data, error } = await supabase
       .from('nfc_codes')
@@ -64,7 +68,11 @@ export default async function handler(req, res) {
 
     if (error) {
       console.error('Insert error:', error);
-      return res.status(500).json({ error: 'Failed to assign prizes' });
+      return res.status(500).json({ 
+        error: 'Failed to assign prizes', 
+        details: error.message,
+        hint: error.hint 
+      });
     }
 
     return res.status(200).json({
@@ -74,6 +82,9 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('Assign prizes error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message 
+    });
   }
 }
